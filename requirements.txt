@@ -1,0 +1,5 @@
+httpx
+beautifulsoup4
+networkx
+python-louvain
+pyvis
