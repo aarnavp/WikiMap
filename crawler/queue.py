@@ -4,50 +4,71 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from crawler.fetcher import fetch_links
-from config import MAX_DEPTH, MAX_NODES
+from graph.store import setup_db, get_connection, save_article, is_crawled, mark_crawled, get_stats
+from config import MAX_DEPTH, MAX_NODES, SEED_ARTICLES
 
-def crawl(seed: str) -> dict[str, list[str]]:
-    """
-    BFS crawl starting from seed article.
-    Returns {title: [linked_titles]} for all visited articles.
-    """
+COMMIT_EVERY = 50  # commit to DB every N articles
+
+#from graph.store import setup_db, get_connection, save_article, is_crawled, mark_crawled, get_stats
+
+def crawl(seed: str):
+    conn = get_connection()
+
     queue = deque()
-    queue.append((seed, 0))        # (article_title, current_depth)
-    visited = set()
-    visited.add(seed.lower())      # lowercase to avoid duplicate visits
-    results = {}                   # title -> [links]
+    queue.append((seed, 0))
 
-    print(f"\n Starting crawl from '{seed}' (max depth={MAX_DEPTH}, max nodes={MAX_NODES})\n")
+    visited = set()
+    visited.add(seed.lower())
+    count = 0
+
+    print(f"\n[crawl] Starting from '{seed}' (max_depth={MAX_DEPTH}, max_nodes={MAX_NODES})\n")
 
     while queue:
-        # stop if we've hit the node cap
-        if len(results) >= MAX_NODES:
-            print(f"\n  [!] Node cap ({MAX_NODES}) reached, stopping crawl.")
+        if count >= MAX_NODES:
+            print(f"\n  [!] Node cap ({MAX_NODES}) reached.")
             break
 
         title, depth = queue.popleft()
 
-        # fetch links for this article
-        fetched_title, links = fetch_links(title)
-        results[fetched_title] = links
+        # skip if already fully crawled (from a previous run)
+        if is_crawled(conn, title):
+            print(f"  [~] '{title}' already crawled, skipping.")
+            continue
 
-        # don't go deeper if we're at max depth
+        fetched_title, links = fetch_links(title)
+        save_article(conn, fetched_title, links)
+        mark_crawled(conn, fetched_title)  # mark as fully crawled
+        count += 1
+
+        if count % COMMIT_EVERY == 0:
+            conn.commit()
+            stats = get_stats(conn)
+            print(f"  [db] {stats['nodes']} nodes, {stats['edges']} edges in DB")
+
         if depth >= MAX_DEPTH:
             continue
 
-        # add unvisited links to the queue
         for link in links:
             if link.lower() not in visited:
                 visited.add(link.lower())
                 queue.append((link, depth + 1))
 
-    print(f"\n Crawl complete — {len(results)} articles visited.")
-    return results
+    conn.commit()
+    stats = get_stats(conn)
+    print(f"\n[crawl] Done — {stats['nodes']} nodes, {stats['edges']} edges in DB.")
+    conn.close()
+
+
+def crawl_all():
+    """Loop over all seeds in config."""
+    setup_db()
+    for seed in SEED_ARTICLES:
+        print(f"\n{'='*50}")
+        print(f"  Seed: {seed}")
+        print(f"{'='*50}")
+        crawl(seed)
 
 
 # --- quick test ---
 if __name__ == "__main__":
-    results = crawl("Quantum mechanics")
-    print(f"\nSample articles crawled:")
-    for title in list(results.keys())[:10]:
-        print(f"  {title} → {len(results[title])} links")
+    crawl_all()
