@@ -82,3 +82,4 @@ if __name__ == "__main__":
     seed = list(G.nodes())[0]
     sub = get_subgraph(G, seed, depth=2)
     print(f"Subgraph from '{seed}': {sub.number_of_nodes()} nodes")
+##
