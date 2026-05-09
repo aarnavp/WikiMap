@@ -2,8 +2,12 @@
 A Python-based Wikipedia graph explorer that crawls Wikipedia articles, builds a directed graph, and visualizes relationships and shortest paths between topics.
 
 ![Search between two articles](assets/PathDemo1.png)
-![Search between two articles](assets/PathDemo2.png)
+
+![](assets/PathDemo2.png)
+
 ![Part of Graph with limited depth in Config](assets/GraphPicture.png)
+
+**--------------------------------------------------------------**
 
 **Features**
 - Wikipedia crawler that builds a directed graph
