@@ -1,7 +1,7 @@
 **WikiGraph**
 A Python-based Wikipedia graph explorer that crawls Wikipedia articles, builds a directed graph, and visualizes relationships and shortest paths between topics.
 
-![Search between two articles](assets/PathDemo1.png)
+![Search between two articles](assets/PathDemo 1.png)
 
 ![](assets/PathDemo2.png)
 
