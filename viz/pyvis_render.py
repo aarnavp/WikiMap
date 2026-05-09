@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import webbrowser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,10 +12,49 @@ import networkx as nx
 from graph.builder import load_graph
 
 
-def _node_payload(G: nx.DiGraph) -> List[Dict[str, Any]]:
+def _compute_node_positions(G: nx.DiGraph, seed: Optional[str] = None) -> Dict[str, Dict[str, int]]:
+    if not G:
+        return {}
+
+    if seed not in G:
+        seed = next(iter(G.nodes()))
+
+    undirected = G.to_undirected()
+    distances = nx.single_source_shortest_path_length(undirected, seed)
+
+    layers: Dict[int, List[str]] = {}
+    for node, depth in distances.items():
+        layers.setdefault(depth, []).append(node)
+
+    positions: Dict[str, Dict[str, int]] = {}
+    for depth, nodes in sorted(layers.items()):
+        radius = 120 + 120 * depth
+        count = len(nodes)
+        for idx, node in enumerate(sorted(nodes)):
+            angle = 2 * math.pi * idx / max(1, count)
+            positions[node] = {
+                "x": int(radius * math.cos(angle)),
+                "y": int(radius * math.sin(angle)),
+            }
+
+    missing = [node for node in G.nodes() if node not in positions]
+    if missing:
+        radius = 120 + 120 * (max(layers.keys()) + 1 if layers else 1)
+        for idx, node in enumerate(sorted(missing)):
+            angle = 2 * math.pi * idx / len(missing)
+            positions[node] = {
+                "x": int(radius * math.cos(angle)),
+                "y": int(radius * math.sin(angle)),
+            }
+
+    return positions
+
+
+def _node_payload(G: nx.DiGraph, positions: Dict[str, Dict[str, int]]) -> List[Dict[str, Any]]:
     nodes: List[Dict[str, Any]] = []
     for title, data in G.nodes(data=True):
         degree = G.degree(title)
+        pos = positions.get(title, {"x": 0, "y": 0})
         nodes.append(
             {
                 "id": title,
@@ -23,6 +63,9 @@ def _node_payload(G: nx.DiGraph) -> List[Dict[str, Any]]:
                 "url": data.get("url", ""),
                 "degree": degree,
                 "size": max(8, min(30, 8 + degree * 1.5)),
+                "x": pos["x"],
+                "y": pos["y"],
+                "fixed": {"x": True, "y": True},
             }
         )
     return nodes
@@ -31,7 +74,14 @@ def _node_payload(G: nx.DiGraph) -> List[Dict[str, Any]]:
 def _edge_payload(G: nx.DiGraph) -> List[Dict[str, Any]]:
     edges: List[Dict[str, Any]] = []
     for source, target in G.edges():
-        edges.append({"from": source, "to": target, "arrows": "to"})
+        edges.append(
+            {
+                "id": f"{source}___{target}",
+                "from": source,
+                "to": target,
+                "arrows": "to",
+            }
+        )
     return edges
 
 
@@ -162,38 +212,58 @@ _TEMPLATE = r"""<!doctype html>
     const RAW_EDGES = __EDGES__;
 
     const nodes = new vis.DataSet(RAW_NODES.map(n => ({
-      id: n.id,
-      label: n.label,
-      title: n.title,
-      url: n.url || "",
-      degree: n.degree || 0,
-      size: n.size || 12,
-      hidden: false,
-      color: {
-        background: "rgba(219,231,255,0.92)",
-        border: "rgba(122,162,255,0.65)",
-        highlight: {
-          background: "rgba(141,242,192,0.95)",
-          border: "rgba(255,255,255,0.95)"
-        }
-      },
-      font: {
-        color: "#eef4ff",
-        size: 16,
-        face: "Inter"
-      },
-      shape: "dot",
-      borderWidth: 1,
-      shadow: {
-        enabled: true,
-        color: "rgba(122,162,255,0.35)",
-        size: 10,
-        x: 0,
-        y: 0
-      }
-    })));
+  id: n.id,
+  label: n.label,
+  title: n.title,
+  url: n.url || "",
+  degree: n.degree || 0,
+  size: n.size || 12,
+  x: n.x,
+  y: n.y,
+  fixed: n.fixed || { x: true, y: true },
+  hidden: false,
+  color: {
+    background: "rgba(219,231,255,0.92)",
+    border: "rgba(122,162,255,0.65)",
+    highlight: {
+      background: "rgba(141,242,192,0.95)",
+      border: "rgba(255,255,255,0.95)"
+    }
+  },
+  font: {
+    color: "#eef4ff",
+    size: 16,
+    face: "Inter"
+  },
+  shape: "dot",
+  borderWidth: 1,
+  shadow: {
+    enabled: true,
+    color: "rgba(122,162,255,0.35)",
+    size: 10,
+    x: 0,
+    y: 0
+  }
+})));
+nodes.add({
+  id: "test_node",
+  label: "Test Node",
+  x: 0,
+  y: 0,
+  fixed: {x: true, y: true},
+  size: 20,
+  color: {
+    background: "red",
+    border: "black"
+  },
+  font: {
+    color: "white",
+    size: 16
+  }
+});
 
     const edges = new vis.DataSet(RAW_EDGES.map(e => ({
+      id: e.id,
       from: e.from,
       to: e.to,
       arrows: e.arrows || "to",
@@ -219,22 +289,9 @@ _TEMPLATE = r"""<!doctype html>
         keyboard: true
       },
       physics: {
-        enabled: true,
-        solver: "barnesHut",
-        barnesHut: {
-          gravitationalConstant: -18000,
-          centralGravity: 0.18,
-          springLength: 140,
-          springConstant: 0.02,
-          damping: 0.16,
-          avoidOverlap: 0.6
-        },
-        stabilization: {
-          iterations: 220,
-          fit: true
-        }
+        enabled: false
       },
-      layout: { improvedLayout: true },
+      layout: { improvedLayout: false },
       nodes: { scaling: { min: 6, max: 28 } },
       edges: {
         arrows: { to: { enabled: true, scaleFactor: 0.7 } },
@@ -524,13 +581,19 @@ def render_interactive_graph(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    positions = _compute_node_positions(G, seed=seed)
+
     html_text = _TEMPLATE
     html_text = html_text.replace("__TITLE__", _escape(title))
-    html_text = html_text.replace("__SEED__", _escape(seed or (next(iter(G.nodes()), "") if G.number_of_nodes() else "")))
+    html_text = html_text.replace(
+        "__SEED__", _escape(seed or (next(iter(G.nodes()), "") if G.number_of_nodes() else ""))
+    )
     html_text = html_text.replace("__DEPTH__", str(depth))
     html_text = html_text.replace("__SOURCE__", _escape(source or ""))
     html_text = html_text.replace("__TARGET__", _escape(target or ""))
-    html_text = html_text.replace("__NODES__", json.dumps(_node_payload(G), ensure_ascii=False))
+    html_text = html_text.replace(
+        "__NODES__", json.dumps(_node_payload(G, positions), ensure_ascii=False)
+    )
     html_text = html_text.replace("__EDGES__", json.dumps(_edge_payload(G), ensure_ascii=False))
 
     output.write_text(html_text, encoding="utf-8")
